@@ -358,6 +358,7 @@ void loop() {
       }
 
 /// LOGGING
+/*
         Serial.println("#################################################################");
         Serial.print("State = ["); 
         Serial.print(StateX[0]); Serial.print(", ");
@@ -369,6 +370,7 @@ void loop() {
         Serial.print(Error[1]); Serial.print(", ");
         Serial.print(Error[2]); Serial.print(", ");
         Serial.print(Error[3]); Serial.println("]");
+*/
     
     //**************************************End of Custom Code ****************************************************
     
