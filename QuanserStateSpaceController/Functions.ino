@@ -97,8 +97,8 @@ void SetpointGen()
         desired[1] = M_PI/4.0;
     }
 
-    desired[0] = -M_PI/6.0;
-    desired[1] = -M_PI/4.0;
+    //desired[0] = -M_PI/6.0;
+    //desired[1] = -M_PI/4.0;
     
 
 }

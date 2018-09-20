@@ -137,7 +137,6 @@ float K[2][4] = {
 */
 
 /* c2d(obs_diff,0.002,'tustin') ?
-*/
 float A_diff_obs[2][2] = {
 {0.81818,0},
 {0,0.81818}};
@@ -154,28 +153,29 @@ float D_diff_obs[4][2] = {
 {0,1},
 {9.0909,0},
 {0,9.0909}};
+*/
 
 /* c2d(obs_diff,0.002,'foh')
+*/
 float A_diff_obs[2][2] = {
-{0.9802,0},
-{0,0.9802}};
+{0.90484,0},
+{0,0.90484}};
 
 float B_diff_obs[2][2] = {
-{0.015684,0},
-{0,0.015684}};
+{0.11592,0},
+{0,0.11592}};
 
 float C_diff_obs[4][2] = {
 {0,0},
 {0,0},
-{-12.5,0},
-{0,-12.5}};
+{-39.063,0},
+{0,-39.06}};
 
 float D_diff_obs[4][2] = {
 {1,0},
 {0,1},
-{9.9007,0},
-{0,9.9007}};
-*/
+{47.581,0},
+{0,47.58}};
 
 
 /* c2d(0.002,'tustin')
@@ -478,8 +478,8 @@ void loop() {
         }
 
 //////// DO OBSERVER STEP /////////////
-        //doDifferentialObserverStep(PitchRad,YawRad);
-        doLuenbergerObserverStep(PitchRad,YawRad,motor0Voltage,motor1Voltage);
+        //doLuenbergerObserverStep(PitchRad,YawRad,motor0Voltage,motor1Voltage);
+        doDifferentialObserverStep(PitchRad,YawRad);
 
         //**************************************End of Custom Code ****************************************************
 
@@ -536,6 +536,7 @@ void loop() {
     // (Note that the Serial.print() function is time consuming.  Printing the entire
     // string at once would exceed the sample time required to balance the pendulum.)
     else {
+/*
         // only print if there's a string ready to be printed, and there's enough time before the next SPI transaction
         if ( (displayData.dDataReady) && (currentMicros - previousMicros <= (sampleTime - 100)) ) {
             // if there is room available in the serial buffer, print one character
@@ -561,6 +562,7 @@ void loop() {
             //////  ********************     ==========  serial comm disables ====
 
         }
+*/
     }
 }
 
@@ -669,5 +671,3 @@ void resetQuanserAero() {
     motor0MSB = 0x80;  // enable amplifier0
     motor1MSB = 0x80;  // enable amplifier1
 }
-
-
