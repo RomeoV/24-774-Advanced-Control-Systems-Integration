@@ -11,6 +11,11 @@
 bool startup = true;  // true the first time the sketch is run after the Arduino power is cycled or the reset pushbutton is pressed
 Phase currentPhase = Phase::SWING_UP;
 unsigned currentILCIter = 0;
+unsigned long timeAtPhaseStart = 0;
+float error[maxILCIterations];
+float u_ilc[100];
+float reference[100];
+float response[100];
 
 unsigned long previousMicros = 0;  // used to store the last time the SPI data was written
 const long sampleTime = 1000;  // set the sample time (the interval between SPI transactions) to 1000us = 1ms
@@ -51,7 +56,12 @@ int LEDBlue = 0;
 
 // Setup global variables for wrap up function
 float alpha = 0.0;  // pendulum angle in radians
+float alpha_prev = 0.0;
+float alpha_dot = 0.0;
 float theta = 0.0;  // arm angle in radians
+float theta_prev = 0.0;
+float theta_dot = 0.0;
+float ObsInternalState[4] = {0,0,0,0};
 float currentSense = 0.0;
 int moduleID = 0;
 
@@ -199,7 +209,7 @@ void resetQUBEServo() {
 
 
 void doStateEstimationByDifferenceEquation(float dt) {
-  alpha = alpha+M_PI; // Let hanging position be alpha=pi => upright position=0
+  //alpha = alpha+M_PI; // Let hanging position be alpha=pi => upright position=0
 
   alpha_dot = (alpha-alpha_prev)/dt;
   theta_dot = (theta-theta_prev)/dt;
@@ -209,16 +219,16 @@ void doStateEstimationByDifferenceEquation(float dt) {
 }
 
 void recordReferenceAndResponse(float tsps){
-  unsigned int current_timestep = (int)(tsps/0.001);
+  unsigned int current_timestep = (int)(tsps/0.1);
   // put current reference in current and next three array cells
-  for (unsigned int timestep = current_timestep; timestep < current_timestep+4 && timestep < 1e5; timestep++) {
+  for (unsigned int timestep = current_timestep; timestep < current_timestep+4 && timestep < 1e3; timestep++) {
     reference[timestep] = sin(1.5*M_PI*tsps);
     response[timestep] = theta;
   }
 }
 
 void setControlInput() {
-  float timeSincePhaseStart = micros()-timeAtPhaseStart;
+  unsigned long timeSincePhaseStart = micros()-timeAtPhaseStart;
   float tsps = timeSincePhaseStart*1e-6; // time since phase start in seconds
 
   if (currentPhase == Phase::ILC_STEP) {
@@ -228,6 +238,7 @@ void setControlInput() {
       currentPhase = Phase::RECENTER;
       computeCurrentError();
       updateILCCommands();
+      alpha *= 0.95;
 
       currentILCIter++;
       timeAtPhaseStart = micros();
@@ -254,7 +265,7 @@ void setControlInput() {
     if (fabs(alpha) < 0.4) {
       motorVoltage = lqr_matrix[0]*theta + lqr_matrix[1]*alpha + lqr_matrix[2]*theta_dot + lqr_matrix[3]*alpha_dot;
 
-      unsigned int current_timestep = (int)(tsps/0.001);
+      unsigned int current_timestep = (int)(tsps/0.1);
       motorVoltage += u_ilc[current_timestep];
     }
     else {
@@ -263,9 +274,9 @@ void setControlInput() {
   }
   else if (currentPhase == Phase::SWING_UP) {
     if (tsps < 0.1) motorVoltage = 0.;
-    else if (tsps >= 0.1 && tsps < 0.17) motorVoltage = 25.;
+    else if (tsps >= 0.13 && tsps < 0.17) motorVoltage = 14.;
     else if (tsps >= 0.17 && tsps < 0.5) motorVoltage = 0.;
-    else if (tsps >= 0.5 && tsps < 0.58) motorVoltage = -25.;
+    else if (tsps >= 0.5 && tsps < 0.58) motorVoltage = -14.;
     else if (tsps >= 0.58 && tsps < 0.77) motorVoltage = 0.;
     else if (tsps >= 0.77 && tsps < 0.82) motorVoltage = 7.5;
     else if (tsps >= 0.82 || fabs(alpha) < 0.4) {
@@ -277,24 +288,72 @@ void setControlInput() {
 }
 
 void updateILCCommands() {
-  for (unsigned ts = 0; ts < 1e5-1; ts++) {
-    u_ilc[ts] += alpha*(reference(ts+1)-response(ts+1));
+  for (unsigned ts = 0; ts < 1e3-1; ts++) {
+    u_ilc[ts] += alpha*(reference[ts+1]-response[ts+1]);
   }
 }
 
 void computeCurrentError() {
   float median_value = 0;
-  for (unsigned ts = 0; ts < 1e5; ts++) {
+  for (unsigned ts = 0; ts < 1e3; ts++) {
     median_value+=(reference[ts]-response[ts]);
   }
-  median_value /= 1e5;
+  median_value /= 1e3;
 
   float standard_deviation = 0.;
   float inner_sum = 0.;
-  for (unsigned ts = 0; ts < 1e5; ts++) {
+  for (unsigned ts = 0; ts < 1e3; ts++) {
     inner_sum+=pow((reference[ts]-response[ts])-median_value,2);
   }
-  standard_deviation = sqrt(inner_sum/1e5);
+  standard_deviation = sqrt(inner_sum/1e3);
   error[currentILCIter] = standard_deviation;
   
+}
+
+void doDifferentialObserverStep() {
+
+    float A_diff_obs[2][2] = {
+	    {0.96079,0},
+	    {0,0.96079}};
+
+    float B_diff_obs[2][2] = {
+	    {0.030749,0},
+	    {0,0.030749}};
+
+    float C_diff_obs[4][2] = {
+	    {0,0},
+	    {0,0},
+	    {-50,0},
+	    {0,-50}};
+
+    float D_diff_obs[4][2] = {
+	    {1,0},
+	    {0,1},
+	    {39.211,0},
+	    {0,39.211}};
+
+  
+    float StateX[4] = {0.0,0.0,0.0,0.0};
+    for (int el = 0; el < 4; el++) {
+         StateX[el] = C_diff_obs[el][0]*ObsInternalState[0] + C_diff_obs[el][1]*ObsInternalState[1] + D_diff_obs[el][0]*theta + D_diff_obs[el][1]*alpha;
+    }
+    /*
+        Serial.println("#################################################################");
+        Serial.print("Differential State = ["); 
+        Serial.print(StateX[0]); Serial.print(", ");
+        Serial.print(StateX[1]); Serial.print(", ");
+        Serial.print(StateX[2]); Serial.print(", ");
+        Serial.print(StateX[3]); Serial.println("]");
+	*/
+
+    float tempState0, tempState1;
+    tempState0 = A_diff_obs[0][0]*ObsInternalState[0] + A_diff_obs[0][1]*ObsInternalState[1] + B_diff_obs[0][0]*theta + B_diff_obs[0][1]*alpha;
+    tempState1 = A_diff_obs[1][0]*ObsInternalState[0] + A_diff_obs[1][1]*ObsInternalState[1] + B_diff_obs[1][0]*theta + B_diff_obs[1][1]*alpha;
+    ObsInternalState[0] = tempState0;
+    ObsInternalState[1] = tempState1;
+    
+    theta = StateX[0];
+    alpha = StateX[1];
+    theta_dot = StateX[2];
+    alpha_dot = StateX[3];
 }

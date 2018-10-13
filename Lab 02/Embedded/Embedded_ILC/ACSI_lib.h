@@ -5,7 +5,7 @@
 #ifndef ACSI_lib_h
 #define ACSI_lib_h
 
-#define NUM_ILC_ITERATIONS 15
+#define maxILCIterations 15
 
 // extern const int slaveSelectPin;
 
@@ -20,11 +20,12 @@ extern Phase currentPhase;
 
 // ILC ALGORITHM
 extern float alpha;
-extern float[NUM_ILC_ITERATIONS] error;
-extern float[1e5] u_ilc;
-extern unsigned int currentILCIter;
-extern float[1e5] reference;
-extern float[1e5] response;
+extern float error[maxILCIterations];
+extern float u_ilc[100];
+extern unsigned currentILCIter;
+extern float reference[100];
+extern float response[100];
+extern unsigned long timeAtPhaseStart;
 
 
 extern bool startup;  // true the first time the sketch is run after the Arduino power is cycled or the reset pushbutton is pressed
@@ -71,6 +72,7 @@ extern float alpha;  // pendulum angle in radians
 extern float alpha_prev;
 extern float theta;  // arm angle in radians
 extern float theta_prev;
+extern float ObsInternalState[4];
 
 extern float alpha_dot; // state estimation by finite difference
 extern float theta_dot;
@@ -89,6 +91,7 @@ void resetQUBEServo();
 void updateILCCommands();
 void computeCurrentError();
 void doStateEstimationByDifferenceEquation();
+void doDifferentialObserverStep();
 void setControlInput();
 
 #endif

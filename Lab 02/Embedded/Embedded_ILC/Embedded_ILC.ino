@@ -63,10 +63,13 @@ void loop() {
   //// ROMEO PUT CODE HERE
 
   // STATE ESTIMATION (differentiation)
-  doStateEstimationByDifferenceEquation(currentMicros - previousMicros);
+  //doStateEstimationByDifferenceEquation(currentMicros - previousMicros);
+  doDifferentialObserverStep();
 
   // CONTROLLER
+  setControlInput();
 
+/*
   if (theta <= -(20*M_PI/180.0)) {
     LEDRed = 999;
     LEDGreen = 0;
@@ -78,6 +81,7 @@ void loop() {
     LEDBlue = 999;
     motorVoltage = 1.0;
   }
+*/
   //This command actually writes the data to the Qube servo
   driveMotor();
   }
@@ -87,6 +91,7 @@ void loop() {
   // (Note that the Serial.print() function is time consuming.  Printing the entire
   // string at once would exceed the sample time required to balance the pendulum.)
   else {  //We're in between samples
+/*
     // only print if there's a string ready to be printed, and there's enough time before the next SPI transaction
     if ( (displayData.dDataReady) && (currentMicros - previousMicros <= (sampleTime - 100)) ) {
       // if there is room available in the serial buffer, print one character
@@ -99,6 +104,6 @@ void loop() {
         }
       }
     }
+*/
   }
 }
-
