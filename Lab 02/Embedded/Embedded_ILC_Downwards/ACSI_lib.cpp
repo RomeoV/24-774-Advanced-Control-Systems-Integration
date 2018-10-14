@@ -9,7 +9,7 @@
 #include <math.h>
 
 bool startup = true;  // true the first time the sketch is run after the Arduino power is cycled or the reset pushbutton is pressed
-Phase currentPhase = Phase::SWING_UP;
+Phase currentPhase = Phase::RECENTER;
 unsigned currentILCIter = 0;
 unsigned long timeAtPhaseStart = 0;
 float error[maxILCIterations];
@@ -262,22 +262,23 @@ void setControlInput() {
   }
 
   if (currentPhase == Phase::ILC_STEP || currentPhase == Phase::RECENTER) {
-    float alpha_ref = 0.;
+    float alpha_ref = M_PI;
     float theta_dot_ref = 0.;
     float alpha_dot_ref = 0.;
 
     float theta_error = theta_ref - theta;
-    float alpha_error = alpha_ref - alpha ;
+    float alpha_error = (fabs(alpha_ref) - alpha)* (alpha>0)?1:-1 ;
     float theta_dot_error = theta_dot_ref - theta_dot;
     float alpha_dot_error = alpha_dot_ref - alpha_dot;
     
     float lqr_matrix[] = {-7.0711, 48.0855, -2.3960, 4.0603};
-    if (fabs(alpha) < 0.4) {
-      motorVoltage = lqr_matrix[0]*theta_error + lqr_matrix[1]*alpha_error + lqr_matrix[2]*theta_dot_error + lqr_matrix[3]*alpha_dot_error;
+    if (fabs(alpha)-M_PI < 0.4) {
+      //motorVoltage = lqr_matrix[0]*theta_error + lqr_matrix[1]*alpha_error + lqr_matrix[2]*theta_dot_error + lqr_matrix[3]*alpha_dot_error;
+      motorVoltage = 0.5*theta_error;
 
       if (currentPhase == Phase::ILC_STEP) {
         unsigned int current_timestep = (unsigned int)(tsps/(10./numTimesteps));
-        motorVoltage -= u_ilc[current_timestep];
+        motorVoltage += u_ilc[current_timestep];
       }
 
       motorVoltage *= -1;

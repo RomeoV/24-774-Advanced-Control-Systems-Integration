@@ -6,7 +6,7 @@
 #define ACSI_lib_h
 
 #define maxILCIterations 60
-#define numTimesteps 50
+#define numTimesteps 25
 
 // extern const int slaveSelectPin;
 
