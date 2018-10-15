@@ -11,14 +11,14 @@ B = ...
 49.1493];
 
 
-Q = diag([5,20,0.05,0.05]);
-R = 0.1
-lqr_controller = lqr(A,B,Q,R)
+Q = diag([25,25,0.05,0.05]);
+R = 0.1;
+lqr_controller = lqr(A,B,Q,R);
 
 
 % Differential observer design
 s = tf('s');
-w_pass = 50;
+w_pass = 40;
 obs = [1 0;
        0 1;
        w_pass*s/(s + w_pass) 0;
