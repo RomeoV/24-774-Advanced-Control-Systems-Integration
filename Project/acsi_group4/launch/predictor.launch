@@ -1,0 +1,14 @@
+<launch>
+
+<!-- predicts the trajectory of the balloon -->
+
+<!-- start the optitrack system -->
+<include file="$(find optitrack)/launch/optitrack_pipeline.launch"/>
+
+<!-- predictor node -->
+<node name="balloon_predictor" pkg="acsi_group4" type="balloon_predictor.py" output="screen"/>
+
+<node name="rviz" pkg="rviz" type="rviz" args="-d $(find acsi_group4)/rviz/predictor.rviz"/>
+
+
+</launch>

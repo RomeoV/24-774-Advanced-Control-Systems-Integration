@@ -1,0 +1,66 @@
+<?xml version="1.0"?>
+<launch>
+    <arg name="uri" default="radio://0/80/250K"/> 
+    <arg name="robot_frame" default="robot" />
+    <arg name="joy_dev" default="/dev/input/js0" />
+
+    //////////////OPTI_TRACK/////////////////
+    <!-- start the optitrack system -->
+    <arg name="iface" default="10.0.0.1"/>
+
+    <!-- Define the transformation between optitrack and the world -->
+    <node name="world_vicon_publisher" pkg="tf" type="static_transform_publisher" args="0 0 0 0 0 1.570796 world optitrack 10" output="screen"/>
+     
+    
+    <!-- Publish optitrack rigid bodies. Both in TF and as a PoseArray msg -->
+    <node name="rigid_bodies_publisher" pkg="optitrack" type="rigid_bodies_publisher.py">
+        <rosparam file="$(find optitrack)/config/rigid_bodies.yaml" command="load" />
+        <param name="iface"  type="string" value="$(arg iface)" />
+    </node>
+
+    
+    <!-- transform the coordinates from vicon rigid body 1 frame to true frame -->
+    <!-- tune this every time before start -->
+    <node name="vicon_robot_frame_publisher" pkg="tf" type="static_transform_publisher" args="0 0 0 0 0 -1.570796 rigid_body_1 buffer 10" output="screen"/>
+    <node name="buffer_robot_frame_publisher" pkg="tf" type="static_transform_publisher" args="0 0 0 -2.35 0 0 buffer robot 10" output="screen"/>
+    
+
+    //////////////RVIZ/////////////////
+    <!-- rviz and visaulzation -->
+    <param name="robot_description" command="$(find xacro)/xacro.py $(find crazyflie_description)/urdf/crazyflie.urdf.xacro" />
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find acsi_group4)/rviz/track.rviz" required="true" />
+    <!-- transform the robot frame from base link -->
+    <node pkg="tf" type="static_transform_publisher" name="baselink_broadcaster" args="0 0 0 0 0 0 1 $(arg robot_frame) base_link 100" />
+    
+
+    //////////////SERVER/////////////////
+    <!-- crazy flie server which takes care of the wireless transformation -->
+    <include file="$(find crazyflie_driver)/launch/crazyflie_server.launch"/>
+
+    <!-- activate one crazyflie -->
+    <group ns="crazyflie">
+        <!-- add crazyflie to the server -->
+        <include file="$(find crazyflie_driver)/launch/crazyflie_add.launch">
+            <arg name="uri" value="$(arg uri)" />
+            <arg name="tf_prefix" value="crazyflie" />
+            <!-- logging allows access to on board sensors -->
+            <arg name="enable_logging" value="True" />
+        </include>
+        
+        <!-- activate joystick -->
+        <node name="joy" pkg="joy" type="joy_node" output="screen" >
+            <param name="dev" value="$(arg joy_dev)" />
+        </node>
+        
+        <!-- joystick simple controller -->
+        <include file="$(find crazyflie_demo)/launch/xbox360.launch">
+        </include>
+        
+        <!-- this node uses the joystick to avtivate services such as takeoff and emergency -->
+        <node name="crazyflie_joystick_activator" pkg="crazyflie_demo" type="controller.py" output="screen"/>
+
+
+    </group>
+
+
+</launch>

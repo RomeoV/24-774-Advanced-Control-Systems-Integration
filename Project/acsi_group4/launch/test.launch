@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<launch>
+
+    <node name="trajectory_planner" pkg="acsi_group4" type="trajectory_planner.py"/>
+
+
+</launch>
