@@ -7,91 +7,221 @@ from nav_msgs.msg import Path
 from geometry_msgs.msg import Pose, PoseStamped
 from optitrack.msg import RigidBodyArray
 from nav_msgs.msg import Path
+from visualization_msgs.msg import Marker
+from std_msgs.msg import Empty
+from std_srvs.srv import Empty as EmptyService, EmptyResponse
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 def trajectory_planner(current_position, destination, moving_time, frequency = 1000):
-	trajectory = []
-	trajectory_derivative = []
-	time_stamp = []
-	timefreq = moving_time * frequency
-	next_postion = 0
-	next_derivative = 0
-	current_position = [float(current_position[i]) for i in range(len(current_position))]
-	destination = [float(destination[i]) for i in range(len(current_position))]
+    trajectory = []
+    trajectory_derivative = []
+    time_stamp = []
+    timefreq = moving_time * frequency
+    next_postion = 0
+    next_derivative = 0
+    current_position = [float(current_position[i]) for i in range(len(current_position))]
+    destination = [float(destination[i]) for i in range(len(current_position))]
 
-	for time in range(timefreq):
-		time = float(time)
-		increment = np.dot(np.subtract(destination, current_position),
-					(10.*(time/timefreq)**3 - 15.*(time/timefreq)**4 + 6.*(time/timefreq)**5))
-		next_postion = np.add(current_position, increment)
-		trajectory.append(next_postion)
+    for time in range(timefreq):
+        time = float(time)
+        increment = np.dot(np.subtract(destination, current_position),
+                    (10.*(time/timefreq)**3 - 15.*(time/timefreq)**4 + 6.*(time/timefreq)**5))
+        next_postion = np.add(current_position, increment)
+        trajectory.append(next_postion)
 
-		increment_derivative = frequency * (30.*(time**2)*(1/timefreq)**3 \
-							-60.*(time**3)*(1/timefreq)**4 + 30.*(time**4)*(1/timefreq)**5)
-		next_derivative = np.dot(np.subtract(destination, current_position), increment_derivative)
-		trajectory_derivative.append(next_derivative)
-		time_stamp.append(time/frequency)
+        increment_derivative = frequency * (30.*(time**2)*(1/timefreq)**3 \
+                            -60.*(time**3)*(1/timefreq)**4 + 30.*(time**4)*(1/timefreq)**5)
+        next_derivative = np.dot(np.subtract(destination, current_position), increment_derivative)
+        trajectory_derivative.append(next_derivative)
+        time_stamp.append(time/frequency)
 
-	return time_stamp, trajectory, trajectory_derivative
+    return time_stamp, trajectory, trajectory_derivative
 
 
 class Planner:
-	def __init__(self):
-		self.target = Pose()
-		self.current_position = Pose()
-		self.path = Path()
-		self.path.header.frame_id = "world"
-		self.active = False
-		self.rate = rospy.Rate(100)		
-		
-		# Subscribe to world info
-		rospy.Subscriber("target", Pose, self.target_cb)
-		rospy.Subscriber("/optitrack/rigid_bodies", RigidBodyArray, self.position_cb)
-		rospy.Subscriber("/balloon_prediction", Path, self.prediction_cb)
+    def __init__(self):
+        self.target = Pose()
+        self.current_position = Pose()
+        self.path = Path()
+        self.path_count = 0
+        self.path.header.frame_id = "world"
+        self.active = False
+        self.rate = rospy.Rate(100)        
+        self.nballoons = rospy.get_param("/nballoon", 1)
+        self.balloon_predictions = []
+        for i in range(self.nballoons):
+            # Set up the subscriber for each balloon
+            cb_name = "/balloon_prediction" + str(i+1)
+            _sub_func = self.make_sub_func(i)
+            setattr(self, cb_name, _sub_func)
+            sub_func = getattr(self, cb_name)
+            rospy.Subscriber(cb_name, Path, sub_func)
+            
+            # Initialize the predictions with a empty path
+            path = Path()
+            self.balloon_predictions.append(path)
+        
+        self.target_balloon_id = 1
+        
+        # Subscribe to world info
+        rospy.Subscriber("target", Pose, self.target_cb)
+        rospy.Subscriber("/optitrack/rigid_bodies", RigidBodyArray, self.position_cb)
+        rospy.Service("start_catching", EmptyService, self.start_catching_service)
+        # Send commands to robot
+        self.control_target_pub = rospy.Publisher("control_target", PoseStamped, queue_size = 10)
+        self.path_pub = rospy.Publisher("path", Path, queue_size = 10)
+        self.balloon_target_visualization_pub = rospy.Publisher("balloon_target_visual", Marker, queue_size = 10)
+        self.control_target_visualization_pub = rospy.Publisher("control_target_visual", Marker, queue_size = 10)
+    
+    def make_sub_func(self, bid):
+        def _func(msg):
+            self.balloon_predictions[bid] = msg
+        return _func
 
-		# Send commands to robot
-		self.control_target_pub = rospy.Publisher("control_target", PoseStamped, queue_size = 10)
-		self.path_pub = rospy.Publisher("path", Path, queue_size = 10)
+    def loop(self):
+        while not rospy.is_shutdown():
+            if self.active:
+                # visaulization 
+                self.path_pub.publish(self.path)
+                self.publish_balloon_target_visaulization()
+                
+                if len(self.path.poses) >= 1:
+                    # Interpolation of the target overhere
+                    time = rospy.Time.now()
+                    control_target = self.interpolatePath(time)
+                    self.publish_control_target_visaulization(control_target)
+                    
+                    ps = PoseStamped()
+                    ps.pose = control_target
+                    self.control_target_pub.publish(ps)
+            self.rate.sleep()
 
-		
-	def loop(self):
-		while not rospy.is_shutdown():
-			if self.active:
-				self.path_pub.publish(self.path)
-			self.rate.sleep()
+    def interpolatePath(self, time):
+        if self.path_count == len(self.path.poses):
+            rospy.logwarn("Reached target!")
+            control_target = self.path.poses[-1].pose
+            control_target.orientation.x = 0
+            control_target.orientation.y = 0
+            control_target.orientation.z = 0
+            control_target.orientation.w = 1
+            #self.path.poses = []
+            self.path_pub.publish(self.path)
+            self.active = False
+            self.path_count = 0
+        else:
+            control_target = self.path.poses[self.path_count].pose
+            control_target.orientation.x = 0
+            control_target.orientation.y = 0
+            control_target.orientation.z = 0
+            control_target.orientation.w = 1
+            self.path_count += 1
+        return control_target
+        
+    def publish_balloon_target_visaulization(self):
+        # published the target on the balloon prediction trajectory
+        marker = Marker()
+        marker.header.frame_id = "world"
+        marker.header.stamp = rospy.Time.now()
+        marker.ns = "baloon_target_visualization"
+        marker.id = 0
+        marker.type = Marker.SPHERE
+        marker.pose.position.x = self.target.position.x
+        marker.pose.position.y = self.target.position.y
+        marker.pose.position.z = self.target.position.z
+        marker.pose.orientation.x = 0
+        marker.pose.orientation.y = 0
+        marker.pose.orientation.z = 0
+        marker.pose.orientation.w = 1
+        marker.scale.x = .05
+        marker.scale.y = .05
+        marker.scale.z = .05
+        marker.color.r = 1.0
+        marker.color.g = 0.0
+        marker.color.b = 0.0
+        marker.color.a = 1.0
 
-	def target_cb(self, msg):
-		# receive target info
-		self.active = True
-		self.target = msg
-		# Plan a minjerk trajectory based on current position and target position
-		current_position = [self.current_position.position.x, self.current_position.position.y, self.current_position.position.z]
-		detsination = [self.target.position.x, self.target.position.y, self.target.position.z]
-		destination = [2,2,2]
-		frequency = 100
-		moving_time = 3
-		time, trajectory, trajectory_derivative = trajectory_planner(current_position, destination, moving_time, frequency)
-		for i in range(len(trajectory)):
-			ps = PoseStamped()
-			ps.header.frame_id = "world"
-			ps.pose.position.x = trajectory[i][0]
-			ps.pose.position.y = trajectory[i][1]
-			ps.pose.position.z = trajectory[i][2]
-			self.path.poses.append(ps)
-		
+        self.balloon_target_visualization_pub.publish(marker)
 
-	def position_cb(self, msg):
-		self.current_position = msg.bodies[0].pose
+    def publish_control_target_visaulization(self, control_target):
+        marker = Marker()
+        marker.header.frame_id = "world"
+        marker.header.stamp = rospy.Time.now()
+        marker.ns = "control_target_visualization"
+        marker.id = 0
+        marker.type = Marker.SPHERE
+        marker.pose.position.x = control_target.position.x
+        marker.pose.position.y = control_target.position.y
+        marker.pose.position.z = control_target.position.z
+        marker.pose.orientation.x = 0
+        marker.pose.orientation.y = 0
+        marker.pose.orientation.z = 0
+        marker.pose.orientation.w = 1
+        marker.scale.x = .05
+        marker.scale.y = .05
+        marker.scale.z = .05
+        marker.color.r = 0.0
+        marker.color.g = 0.0
+        marker.color.b = 1.0
+        marker.color.a = 1.0
 
-	def prediction_cb(self, msg):
-		pass
+        self.balloon_target_visualization_pub.publish(marker)
 
+    def target_cb(self, msg):
+        self.active = True
+        self.target = msg
+        # Plan a minjerk trajectory based on current position and target position
+        # Clear previous path
+        self.path.poses = []
+        self.path_count = 0
+        rospy.logwarn("current position is {0}, target is {1}".format(self.current_position, self.target))
+        current_position = [self.current_position.position.x, self.current_position.position.y, self.current_position.position.z]
+        destination = [self.target.position.x, self.target.position.y, self.target.position.z]
+        frequency = 100
+        moving_time = 3
+        time, trajectory, trajectory_derivative = trajectory_planner(current_position, destination, moving_time, frequency)
+        for i in range(len(trajectory)):
+            ps = PoseStamped()
+            ps.header.frame_id = "world"
+            ps.pose.position.x = trajectory[i][0]
+            ps.pose.position.y = trajectory[i][1]
+            ps.pose.position.z = trajectory[i][2]
+            self.path.poses.append(ps)
+        rospy.logwarn("Received target {0}, planned path lenth {1}".format(msg, len(self.path.poses)))
+
+    def position_cb(self, msg):
+        # updates the position info of drone from optitrack
+        for i in range(len(msg.bodies)):
+            if msg.bodies[i].id == 1:
+                self.current_position = msg.bodies[i].pose
+    
+    def start_catching_service(self, srv):
+        self.active = True
+        # right now just track the last point of the prediction
+        self.target = self.balloon_predictions[self.target_balloon_id - 1].poses[0].pose
+        # Plan a minjerk trajectory based on current position and target position
+        # Clear previous path
+        self.path.poses = []
+        self.path_count = 0
+        current_position = [self.current_position.position.x, self.current_position.position.y, self.current_position.position.z]
+        destination = [self.target.position.x, self.target.position.y, self.target.position.z]
+        frequency = 100
+        moving_time = 3
+        time, trajectory, trajectory_derivative = trajectory_planner(current_position, destination, moving_time, frequency)
+        for i in range(len(trajectory)):
+            ps = PoseStamped()
+            ps.header.frame_id = "world"
+            ps.pose.position.x = trajectory[i][0]
+            ps.pose.position.y = trajectory[i][1]
+            ps.pose.position.z = trajectory[i][2]
+            self.path.poses.append(ps)
+        rospy.logwarn("Received signal to track balloon , planned path length {1}".format(self.target_balloon_id, len(self.path.poses)))
+        return EmptyResponse()
 if __name__ == "__main__":
 
-	rospy.init_node('minjerk_trajectory', anonymous=False)
-	planner = Planner()
-	planner.loop()
+    rospy.init_node('trajectroy_planner', anonymous=False)
+    planner = Planner()
+    planner.loop()
 
 

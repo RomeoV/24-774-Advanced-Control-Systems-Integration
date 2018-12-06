@@ -1,17 +1,16 @@
 #!/usr/bin/python
-#subscribes the information of the optitrack system and provides estimation of trajectory of the ballons
+# subscribes the information of the optitrack system and provides estimation of trajectory of the ballons
 
 import rospy
 import math
 import numpy as np
 from scipy.signal import butter, lfilter, freqz
 
-
-
 from optitrack.msg import RigidBodyArray
 from acsi_group4.msg import BalloonArray, Balloon
 from visualization_msgs.msg import MarkerArray, Marker
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import Point, PoseStamped
+from nav_msgs.msg import Path
 
 # Lowpass filter
 def butter_lowpass(cutoff, fs, order):
@@ -25,135 +24,143 @@ def butter_lowpass_filter(data, cutoff, fs, order):
     y = lfilter(b, a, data)
     return y
 
+class BalloonPredictor:
+    # Predict the balloon's trajectory based on sensing info
+    def __init__(self, balloon_id):
+        self.id = balloon_id
+        self.vz = -2.0
+        self.dt = 0.1
 
+        # The true z value of the floor
+        self.z0 = rospy.get_param("/z0", -1.4)
+    def update_velocity(self, curr_position):
+        # Infere about the balloon's velocity, we use a constant speed model to predit trajectory 
+        self.vz = self.vz
+        pass
+    def path_prediction(self, curr_position):
+        path = Path()
+        path.header.frame_id = "world"
+        
+        t0 = rospy.get_time()
+        position = Point()
+        position.x = curr_position.x
+        position.y = curr_position.y
+        position.z = curr_position.z
+        
+        dt = .0
+        t = t0
+        while position.z - self.z0 >= 0.1 and dt <= 5.0:
+            ps = PoseStamped()
+            ps.header.frame_id = "world"
+            ps.header.stamp = rospy.Time.from_sec(t)
+            p = Point()
+            p.x = position.x
+            p.y = position.y
+            p.z = position.z
+
+            ps.pose.position = p
+            path.poses.append(ps)
+
+            # update position of next iteration
+            t += self.dt
+            position.z += self.vz * self.dt
+        
+        return path
+    
+    def add_points(self, p1, p2):
+        p_add = Point()
+        p_add.x = p1.x + p2.x
+        p_add.y = p1.y + p2.z
+        p_add.z = p1.z + p2.z
+        return p_add
 
 class Predictor:
     def __init__(self):
         self.rate = rospy.Rate(100)
-        self.n_balloons = 0
-        self.balloon_prev_pos = []
         self.balloon_pos = []
-        self.prev_t = 0
         self.curr_t = 0
+        
+        self.received_states = False
+        self.nballoons = rospy.get_param("/nballoon", 0)
+        self.balloon_predictors = [] 
+        self.balloon_prediction_pubs = []
+        self.balloon_marker_pubs = []
+        for i in range(self.nballoons):
+            # publisher for prediction
+            balloon_prediction_pub = rospy.Publisher("balloon_prediction" + str(i+1), Path, queue_size = 10)
+            self.balloon_prediction_pubs.append(balloon_prediction_pub)
+            balloon_visualize_pub = rospy.Publisher("balloon_position" + str(i+1), Marker, queue_size = 10)
+            self.balloon_marker_pubs.append(balloon_visualize_pub)
+            
+            balloon_predictor = BalloonPredictor(i)
+            self.balloon_predictors.append(balloon_predictor)
+            self.balloon_pos.append([])
 
-        self.visualization_pub = rospy.Publisher("balloons", MarkerArray, queue_size=10)
-  
-    def position_to_visual(self, points, marker_id):
+    def run(self):
+        while not rospy.is_shutdown():
+            if self.received_states:
+                # publish the balloons estimation
+                for i in range(self.nballoons):
+
+                    # prediction and filtering
+                    self.balloon_predictors[i].update_velocity(self.balloon_pos[i])
+                    predicted_path = self.balloon_predictors[i].path_prediction(self.balloon_pos[i])
+                    
+                    # publish the prediced path
+                    self.balloon_prediction_pubs[i].publish(predicted_path)
+                    # pusblish the visualization of the balloon itself
+                    self.publish_balloon_visualize(i)
+            # end of prediction 
+            self.rate.sleep()
+    
+    def publish_prediction(self, points, balloon_id):
+        path = Path()
+        path.header.frame_id = "world"
+        for i in range(len(points)):
+            ps = PoseStamped()
+            ps.header.frame_id = "world"
+            ps.pose.position.x = points[i].x
+            ps.pose.position.y = points[i].y
+            ps.pose.position.z = points[i].z
+            path.poses.append(ps)
+        
+        self.balloon_prediction_pubs[balloon_id].publish(path)
+    
+    def publish_balloon_visualize(self, balloon_id):
+        # published the balloon
         marker = Marker()
         marker.header.frame_id = "world"
         marker.header.stamp = rospy.Time.now()
-        marker.ns = "balloon_marker"
-        marker.id = marker_id
-        marker.type = Marker.LINE_STRIP
-        marker.pose.position.x = 0
-        marker.pose.position.y = 0
-        marker.pose.position.z = marker_id * 2
-        
+        marker.ns = "baloon_visualization"
+        marker.id = balloon_id
+        marker.type = Marker.SPHERE
+        marker.pose.position.x = self.balloon_pos[balloon_id].x
+        marker.pose.position.y = self.balloon_pos[balloon_id].y
+        marker.pose.position.z = self.balloon_pos[balloon_id].z
         marker.pose.orientation.x = 0
         marker.pose.orientation.y = 0
         marker.pose.orientation.z = 0
         marker.pose.orientation.w = 1
-        
-        marker.scale.x = .01
-        
-        
-        marker.color.a = 1.0
+        marker.scale.x = .4
+        marker.scale.y = .4
+        marker.scale.z = .4
         marker.color.r = 1.0
-        marker.color.g = .0
-        marker.color.b = .0
-        
-
-        for i in range(len(points)):
-            marker.points.append(points[i])
-
-        return marker
-
-
-    def run(self):
-        while not rospy.is_shutdown():
-            # publish the balloons estimation
-            balloons = BalloonArray()
-            visual_msg = MarkerArray()
-            for i in range(self.n_balloons):
-                
-                
-                # prediction and filtering
-                b = Balloon()
-
-                b.x = self.balloon_pos[i].x
-                b.y = self.balloon_pos[i].y
-                b.z = self.balloon_pos[i].z
-                
-                # do the velocity estimation over here
-                #b.vz = (self.balloon_pos[i].z - self.balloon_prev_pos[i].z)/(self.curr_t - self.prev_t)
-                balloons.balloons.append(b)
-                
-                dt = self.curr_t-self.prev_t
-                
-                if len(b.z) > 3:
-                    b.vz = (b.z[2]-b.z[1])/dt
-                    
-                b_p = Balloon()
-                b_p.x = b.x[0]
-                b_p.y = b.y[0]
-                b_p.z = b.z[0]
-                count = 1;
-                
-                while b_p.z >= 50.0 * 0.001:
-                    balloons.balloons.append(b_p)
-                    b_p.x = b.x[0]
-                    b_p.y = b.y[0]
-                    b_p.z = b.z+count*b.vz
-                    count += 1
-                    
-                # Filter data
-                order = 2
-                fs = 100       # sample rate, Hz
-                cutoff = 10 # cutoff frequency
-                b, a = butter_lowpass(cutoff, fs, order)
-                b_f = Balloon()
-                b_f.x = b_p.x
-                b_f.y = b_p.y
-                b_f.z = butter_lowpass_filter(b_p.z, cutoff, fs, order)
-
-                # generate a pseudo array storing predicted positions
-                
-                points = []
-                for j in range(10):
-                    p = Point()
-                    p.x = b.x + 0.1*j
-                    p.y = b.y + 0.1*j
-                    p.z = b.z + 0.1*j
-                    points.append(p)
-
-
-
-                balloon_marker = self.position_to_visual(points, i)
-                visual_msg.markers.append(balloon_marker)
-
-
-            self.visualization_pub.publish(visual_msg)
-            
-            
-            self.rate.sleep()
-            
+        marker.color.g = 0.0
+        marker.color.b = 0.0
+        marker.color.a = 0.5
+        self.balloon_marker_pubs[balloon_id].publish(marker)
 
     def optitrack_callback(self, data):
         # note that id 1 is the drone
-        self.n_balloons = len(data.bodies) - 1 
-        if len(self.balloon_pos) == 0:
-            for i in range(self.n_balloons):
-                self.balloon_pos.append(data.bodies[i+1].pose.position)
-        else:
-            self.balloon_prev_pos = self.balloon_pos
-            for i in range(self.n_balloons):
-                self.balloon_pos[i] = data.bodies[i+1].pose.position
-            self.prev_t = self.curr_t
-            self.curr_t = rospy.get_time() 
+        for i in range(len(data.bodies)):
+            if data.bodies[i].id is not 1:
+                self.balloon_pos[data.bodies[i].id - 2] = data.bodies[i].pose.position
+        self.received_states = True
 
 if __name__ == '__main__':
 
     rospy.init_node('baloon_predictor', anonymous=False)
+    rospy.logwarn("Start balloon predictor node")
     predictor = Predictor()
 
     rospy.Subscriber("optitrack/rigid_bodies", RigidBodyArray, predictor.optitrack_callback)
