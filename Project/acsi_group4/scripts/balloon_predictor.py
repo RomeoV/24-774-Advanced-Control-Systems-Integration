@@ -4,6 +4,8 @@
 import rospy
 import math
 import numpy as np
+import pandas as pd
+from scipy.optimize import curve_fit
 from scipy.signal import butter, lfilter, freqz
 
 from optitrack.msg import RigidBodyArray
@@ -28,43 +30,61 @@ class BalloonPredictor:
     # Predict the balloon's trajectory based on sensing info
     def __init__(self, balloon_id):
         self.id = balloon_id
-        self.vz = -2.0
-        self.dt = 0.1
+        self.dt_predict = 0.1
+        self.pose_data = pd.DataFrame(columns=['time','x','y','z'])
+        self.z0 = rospy.get_param("/z0", 0.) # The true z value of the floor
 
-        # The true z value of the floor
-        self.z0 = rospy.get_param("/z0", -1.4)
-    def update_velocity(self, curr_position):
-        # Infere about the balloon's velocity, we use a constant speed model to predit trajectory 
-        self.vz = self.vz
-        pass
-    def path_prediction(self, curr_position):
+    def get_data_in_timewindow(self, t_start, t_end):
+        data_in_timewindow = 
+            self.pose_data.loc[  
+                (self.pose_data.time >= t_start)
+              & (self.pose_data.time <= t_end)
+              & (self.pose_data.index%1 == 0)  # gives option to only use every n-th datapoint
+            ] 
+        return data_in_timewindow
+
+    @staticmethod
+    def position_function(t,*params):
+        v_max, kappa, t0, z0 = params
+        return z0 + v_max*(t0+1/kappa) - v_max*t - v_max/kappa * np.exp(-kappa*(t-t0))
+
+    @staticmethod
+    def velocity_function(t,*params):
+        v_max, kappa, t0, z0 = params
+        return v_max*(1-np.exp(-kappa*(t-t0)))
+
+    def add_datapoint(self, curr_pose):
+        t = curr_pose.stamp
+        x,y,z = curr_pose.x, curr_pose.y, curr_pose.z
+        self.pos_data.append(pd.DataFrame(np.matrix([t,x,y,z]),
+            columns=['time','x','y','z']), ignore_indices=True)
+
+    def path_prediction(self):
         path = Path()
         path.header.frame_id = "world"
         
         t0 = rospy.get_time()
-        position = Point()
-        position.x = curr_position.x
-        position.y = curr_position.y
-        position.z = curr_position.z
-        
-        dt = .0
-        t = t0
-        while position.z - self.z0 >= 0.1 and dt <= 5.0:
+
+        data_in_timewindow = self.get_data_in_timewindow(t0-2,t0)
+        p_opt, _ = curve_fit(BalloonPredictor.position_function, data_in_timewindow.time, data_in_timewindow.z, p0=(3,2,t0,3))
+
+        current_position = Point(*(self.pose_data.iloc[-1][1:])) # get latest datapoint
+
+        time_pred = np.arange(t0,t0+3,self.dt_predict)
+        x_pred = np.ones(time_pred.shape)*current_position.x
+        y_pred = np.ones(time_pred.shape)*current_position.y
+        z_pred = BalloonPredictor.position_function(time_pred,*p_opt)
+
+        for t,x,y,z in zip(time_pred, x_pred, y_pred, z_pred):
+            if z < self.z0+0.05:
+                break
             ps = PoseStamped()
             ps.header.frame_id = "world"
             ps.header.stamp = rospy.Time.from_sec(t)
-            p = Point()
-            p.x = position.x
-            p.y = position.y
-            p.z = position.z
+            ps.pose = Point(x,y,z)
 
-            ps.pose.position = p
             path.poses.append(ps)
 
-            # update position of next iteration
-            t += self.dt
-            position.z += self.vz * self.dt
-        
         return path
     
     def add_points(self, p1, p2):
@@ -103,8 +123,8 @@ class Predictor:
                 for i in range(self.nballoons):
 
                     # prediction and filtering
-                    self.balloon_predictors[i].update_velocity(self.balloon_pos[i])
-                    predicted_path = self.balloon_predictors[i].path_prediction(self.balloon_pos[i])
+                    self.balloon_predictors[i].add_datapoint(self.balloon_pos[i])
+                    predicted_path = self.balloon_predictors[i].path_prediction()
                     
                     # publish the prediced path
                     self.balloon_prediction_pubs[i].publish(predicted_path)
