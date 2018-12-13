@@ -74,6 +74,7 @@ public:
         m_listener.waitForTransform(m_worldFrame, m_frame, ros::Time(0), ros::Duration(10.0)); 
         m_pubNav = nh.advertise<geometry_msgs::Twist>("cmd_vel", 1);
         m_subscribeGoal = nh.subscribe("control_target", 1, &Controller::goalChanged, this);
+
         m_serviceTakeoff = nh.advertiseService("takeoff", &Controller::takeoff, this);
         m_serviceLand = nh.advertiseService("land", &Controller::land, this);
 
@@ -104,10 +105,15 @@ private:
         m_listener.lookupTransform(m_worldFrame, m_frame, ros::Time(0), transform);
         m_startZ = transform.getOrigin().z();
         
-        // default goal 
-        m_goal.pose.position.x = transform.getOrigin().x();
-        m_goal.pose.position.y = transform.getOrigin().y();
-        m_goal.pose.position.z = transform.getOrigin().x() + 1.0;
+        this->getPose();
+        // default goal
+        m_goal.pose.position.x = 0;
+        m_goal.pose.position.y = 0;
+        m_goal.pose.position.z = 1.0;
+        m_goal.pose.position.x = curr_pose.position.x;
+        m_goal.pose.position.y = curr_pose.position.y;
+        m_goal.pose.position.z = curr_pose.position.z + 1.0;
+
         m_goal.pose.orientation.x = 0;
         m_goal.pose.orientation.y = 0;
         m_goal.pose.orientation.z = 0;
@@ -173,7 +179,7 @@ private:
                 }
                 else
                 {
-                    m_thrust += 20000 * dt;
+                    m_thrust += 15000 * dt;
                     geometry_msgs::Twist msg;
                     msg.linear.z = m_thrust;
                     m_pubNav.publish(msg);
@@ -196,7 +202,7 @@ private:
             // intentional fall-thru
         case Automatic:
             {
-                std::cout << m_state << std::endl; 
+                //std::cout << m_state << std::endl; 
                 tf::StampedTransform transform;
                 m_listener.lookupTransform(m_worldFrame, m_frame, ros::Time(0), transform);
 
@@ -259,6 +265,7 @@ private:
         curr_pose.orientation.z = trans.getRotation().z();        
         curr_pose.orientation.w = trans.getRotation().w();        
         
+        //std::cout << curr_pose.position << std::endl;
         /*
         tfScalar roll, pitch, yaw;
         tf::Matrix3x3(trans.getRotation()).getRPY(roll, pitch, yaw);

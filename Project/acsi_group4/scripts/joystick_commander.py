@@ -17,8 +17,18 @@ from crazyflie_driver.srv import UpdateParams
 from std_srvs.srv import Empty
 
 class Controller():
-    def __init__(self, use_controller, joy_topic):
+    def __init__(self):
         
+        # extract the digit from namespace
+        ns = rospy.get_namespace()
+        for i in range(len(ns)):
+            if ns[i].isdigit():
+               self.robot_id = int(ns[i])
+               break
+        
+        if self.robot_id == None:
+            rospy.logfatal("Did not set up crazyflie namespace with id!!")
+         
         # Services provided by crazyflie_server
         rospy.logwarn("waiting for services from crazyflie server")
         try: 
@@ -39,12 +49,12 @@ class Controller():
         rospy.logwarn("waiting for services from position controller")
         try:
             rospy.loginfo("waiting for land service")
-            rospy.wait_for_service('land')
+            rospy.wait_for_service('land', 2.0)
             rospy.loginfo("found land service")
             self._land = rospy.ServiceProxy('land', Empty)
 
             rospy.loginfo("waiting for takeoff service")
-            rospy.wait_for_service('takeoff')
+            rospy.wait_for_service('takeoff', 2.0)
             rospy.loginfo("found takeoff service")
             self._takeoff = rospy.ServiceProxy('takeoff', Empty)
         
@@ -55,18 +65,30 @@ class Controller():
         rospy.logwarn("waiting for services from trajectroy planner")
         try:
             rospy.loginfo("waiting for catch ball service")
-            rospy.wait_for_service('start_catching')
+            rospy.wait_for_service('start_catching', 2.0)
             rospy.loginfo("found start_catching service")
             self._catch = rospy.ServiceProxy('start_catching', Empty)
         
         except (rospy.ServiceException, rospy.ROSException):
             rospy.logwarn("couldn't find service from trajectory planner")
         
+        # Services provided by scheduler
+        rospy.logwarn("waiting for services from scheduler")
+        try:
+            rospy.loginfo("waiting for scheduling service")
+            rospy.wait_for_service('/start_scheduling', 2.0)
+            rospy.loginfo("found start_scheduling service")
+            self._schedule = rospy.ServiceProxy('/start_scheduling', Empty)
         
+        except (rospy.ServiceException, rospy.ROSException):
+            rospy.logwarn("couldn't find service from scheduler")
+        
+    
+
         # subscribe to the joystick at the end to make sure that all required
         # services were found
         self._buttons = None
-        rospy.Subscriber(joy_topic, Joy, self._joyChanged)
+        rospy.Subscriber("joy", Joy, self._joyChanged)
 
     def _joyChanged(self, data):
         for i in range(0, len(data.buttons)):
@@ -79,20 +101,13 @@ class Controller():
                     self._land()
                 if i == 3 and data.buttons[i] == 1 and self._catch != None:
                     self._catch()
-                if i == 4 and data.buttons[i] == 1:
-                    value = int(rospy.get_param("ring/headlightEnable"))
-                    if value == 0:
-                        rospy.set_param("ring/headlightEnable", 1)
-                    else:
-                        rospy.set_param("ring/headlightEnable", 0)
-                    self._update_params(["ring/headlightEnable"])
-                    print(not value)
+                if i == 7 and data.buttons[i] == 1 and self._schedule != None and self.robot_id == 1:
+                    self._schedule()
 
         self._buttons = data.buttons
 
 if __name__ == '__main__':
+    rospy.logwarn("initialize joystick commander")
     rospy.init_node('joystick_commander', anonymous=True)
-    use_controller = rospy.get_param("~use_crazyflie_controller", False)
-    joy_topic = rospy.get_param("~joy_topic", "joy")
-    controller = Controller(use_controller, joy_topic)
+    controller = Controller()
     rospy.spin()

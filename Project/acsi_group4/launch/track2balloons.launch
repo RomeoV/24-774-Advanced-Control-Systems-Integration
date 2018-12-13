@@ -3,12 +3,14 @@
     <arg name="uri" default="radio://0/70/2M"/> 
     <arg name="robot_frame" default="robot" />
     <arg name="joy_dev" default="/dev/input/js0" />
-    <!--<arg name="pid" default="pid_tuning_aggressive.yaml"/>-->
     <arg name="pid" default="pid_tuning_robot2.yaml"/>
+    <!--<arg name="pid" default="pid_tuning_aggressive.yaml"/>-->
     
+
     <param name="vmax" value="0.5"/>
     <param name="nrobots" value="1" />
-    <param name="nballoons" value="1" />
+    <param name="nballoons" value="2" />
+    <param name="z0" value="-0.05"/>
     //////////////OPTI_TRACK/////////////////
     <!-- start the optitrack system -->
     <arg name="iface" default="10.0.0.1"/>
@@ -20,29 +22,31 @@
     
     <!-- transform the coordinates from vicon rigid body 1 frame to true frame -->
     <!-- tune this every time before start -->
+    
     <node name="vicon_robot_frame_publisher" pkg="tf" type="static_transform_publisher" args="0 0 0 0 0 -1.570796 rigid_body_1 buffer 10" output="screen"/>
     <node name="buffer_robot_frame_publisher" pkg="tf" type="static_transform_publisher" args="0 0 0 0 0 0 buffer robot 10" output="screen"/>
-    
 
     //////////////RVIZ/////////////////
     <!-- rviz and visaulzation -->
     <param name="robot_description" command="$(find xacro)/xacro.py $(find crazyflie_description)/urdf/crazyflie.urdf.xacro" />
-    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find acsi_group4)/rviz/track.rviz" required="true" />
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find acsi_group4)/rviz/track2balloons.rviz" required="true" />
 
     <!-- transform the robot frame from base link -->
     <node pkg="tf" type="static_transform_publisher" name="baselink_broadcaster" args="0 0 0 0 0 0 1 $(arg robot_frame) base_link 100" />
     
     
     //////////////PREDITCOR////////////////
-    <node name="balloon_predictor" pkg="acsi_group4" type="balloon_predictor.py"/>
+    <node name="ballon_predictor" pkg="acsi_group4" type="balloon_predictor.py"/>
+    
 
     //////////////SERVER/////////////////
     <!-- crazy flie server which takes care of the wireless transformation -->
     <include file="$(find crazyflie_driver)/launch/crazyflie_server.launch"/>
     
-
     ////////////SCHEDULER/////////////////
     <node name="task_scheduler" pkg="acsi_group4" type="scheduler.py" output="screen"/>
+    
+    ///////////CRAZYFLIE1////////////////
     <!-- activate one crazyflie -->
     <group ns="crazyflie1">
         
@@ -72,11 +76,14 @@
         <node name="position_controller" pkg="acsi_group4" type="position_controller" output="screen">
             <param name="frame" value="$(arg robot_frame)" />
             <param name="worldFrame" value="world" />
-            <rosparam command="load" file="$(find acsi_group4)/config/$(arg pid)" />
+            <rosparam command="load" file="$(find acsi_group4)/config/$(arg pid)"/>
         </node>
+        
+
         //////////////PLANNER////////////////
 
         <!-- waypoint sender -->
+        <!--<node name="waypoint_setter" pkg="acsi_group4" type="waypoint_setter.py"/>-->
         <node name="trajectory_planner" pkg="acsi_group4" type="trajectory_planner.py"/>
     </group>
 

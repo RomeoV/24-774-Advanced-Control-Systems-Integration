@@ -1,0 +1,133 @@
+<?xml version="1.0"?>
+<launch>
+    <arg name="uri2" default="radio://0/80/2M"/> 
+    <arg name="uri1" default="radio://0/70/2M"/> 
+    <arg name="robot_frame1" default="robot1" />
+    <arg name="robot_frame2" default="robot2" />
+    <arg name="joy_dev" default="/dev/input/js0" />
+    <arg name="pid1" default="pid_tuning_aggressive.yaml"/>
+    <arg name="pid2" default="pid_tuning_aggressive.yaml"/>
+    
+
+    <param name="vmax" value="0.5"/>
+    <param name="nrobots" value="2" />
+    <param name="nballoons" value="2" />
+    //////////////OPTI_TRACK/////////////////
+    <!-- start the optitrack system -->
+    <arg name="iface" default="10.0.0.1"/>
+    <include file="$(find acsi_group4)/launch/optitrack_pipeline.launch"/>
+
+    <!-- Define the transformation between optitrack and the world -->
+    <node name="world_vicon_publisher" pkg="tf" type="static_transform_publisher" args="0 0 0 0 0 1.570796 world optitrack 10" output="screen"/>
+     
+    
+    <!-- transform the coordinates from vicon rigid body 1 frame to true frame -->
+    <!-- tune this every time before start -->
+
+    <node name="vicon_robot_frame_publisher1" pkg="tf" type="static_transform_publisher" args="0 0 0 0 0 -1.570796 rigid_body_1 buffer1 10" output="screen"/>
+    <node name="buffer_robot_frame_publisher1" pkg="tf" type="static_transform_publisher" args="0 0 0 0 0 0 buffer1 robot1 10" output="screen"/>
+    
+    <node name="vicon_robot_frame_publisher2" pkg="tf" type="static_transform_publisher" args="0 0 0 0 0 -1.570796 rigid_body_2 buffer2 10" output="screen"/>
+    <node name="buffer_robot_frame_publisher2" pkg="tf" type="static_transform_publisher" args="0 0 0 0 0 0 buffer2 robot2 10" output="screen"/>
+    
+    //////////////RVIZ/////////////////
+    <!-- rviz and visaulzation -->
+
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find acsi_group4)/rviz/track2robot2balloon.rviz" required="true" />
+
+
+    ////////////SCHEDULER/////////////////
+    <node name="task_scheduler" pkg="acsi_group4" type="scheduler.py" output="screen"/>
+    
+    
+    //////////////PREDITCOR////////////////
+    <node name="ballon_predictor" pkg="acsi_group4" type="balloon_predictor.py"/>
+
+    //////////////SERVER/////////////////
+    <!-- crazy flie server which takes care of the wireless transformation -->
+    <include file="$(find crazyflie_driver)/launch/crazyflie_server.launch"/>
+
+    <!-- activate one crazyflie -->
+    <group ns="crazyflie1">
+        <param name="robot_description" command="$(find xacro)/xacro.py $(find acsi_group4)/urdf/crazyflie1.urdf.xacro" />
+        <!-- transform the robot frame from base link -->
+        <node pkg="tf" type="static_transform_publisher" name="baselink_broadcaster1" args="0 0 0 0 0 0 1 $(arg robot_frame1) base_link1 100" />
+        
+        //////////////ADD COMUNICATION WITH SERVER AND WIRELESS TRANSFER/////////////////
+        <!-- add crazyflie to the server -->
+        <include file="$(find crazyflie_driver)/launch/crazyflie_add.launch">
+            <arg name="uri" value="$(arg uri1)" />
+            <arg name="tf_prefix" value="crazyflie1" />
+            <!-- logging allows access to on board sensors -->
+            <arg name="enable_logging" value="False" />
+        </include>
+        
+        //////////////JOY STICK////////////////
+        <!-- activate joystick -->
+        <node name="joy" pkg="joy" type="joy_node" output="screen" >
+            <param name="dev" value="$(arg joy_dev)" />
+        </node>
+        
+        <!-- this node uses the joystick to avtivate services such as takeoff and emergency -->
+        <node name="joystick_commander" pkg="acsi_group4" type="joystick_commander.py" output="screen"/>
+
+
+
+        //////////////CONTROLLER////////////////
+        
+        <!-- position control -->
+        <node name="position_controller" pkg="acsi_group4" type="position_controller" output="screen">
+            <param name="frame" value="$(arg robot_frame1)" />
+            <param name="worldFrame" value="world" />
+            <rosparam command="load" file="$(find acsi_group4)/config/$(arg pid1)" />
+        </node>
+        
+
+        //////////////PLANNER////////////////
+
+        <!-- waypoint sender -->
+        <node name="trajectory_planner" pkg="acsi_group4" type="trajectory_planner.py"/>
+    </group>
+
+    <group ns="crazyflie2">
+        <param name="robot_description" command="$(find xacro)/xacro.py $(find acsi_group4)/urdf/crazyflie2.urdf.xacro" />
+        <!-- transform the robot frame from base link -->
+        <!-- transform the robot frame from base link -->
+        <node pkg="tf" type="static_transform_publisher" name="baselink_broadcaster2" args="0 0 0 0 0 0 1 $(arg robot_frame2) base_link2 100" />
+        
+        //////////////ADD COMUNICATION WITH SERVER AND WIRELESS TRANSFER/////////////////
+        <!-- add crazyflie to the server -->
+        <include file="$(find crazyflie_driver)/launch/crazyflie_add.launch">
+            <arg name="uri" value="$(arg uri2)" />
+            <arg name="tf_prefix" value="crazyflie2" />
+            <!-- logging allows access to on board sensors -->
+            <arg name="enable_logging" value="False" />
+        </include>
+        
+        //////////////JOY STICK////////////////
+        <!-- activate joystick -->
+        <node name="joy" pkg="joy" type="joy_node" output="screen" >
+            <param name="dev" value="$(arg joy_dev)" />
+        </node>
+        
+        <!-- this node uses the joystick to avtivate services such as takeoff and emergency -->
+        <node name="joystick_commander" pkg="acsi_group4" type="joystick_commander.py" output="screen"/>
+
+
+
+        //////////////CONTROLLER////////////////
+        
+        <!-- position control -->
+        <node name="position_controller" pkg="acsi_group4" type="position_controller" output="screen">
+            <param name="frame" value="$(arg robot_frame2)" />
+            <param name="worldFrame" value="world" />
+            <rosparam command="load" file="$(find acsi_group4)/config/$(arg pid2)" />
+        </node>
+
+        //////////////PLANNER////////////////
+
+        <!-- waypoint sender -->
+        <node name="trajectory_planner" pkg="acsi_group4" type="trajectory_planner.py"/>
+    </group>
+
+</launch>
